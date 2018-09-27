@@ -1,0 +1,165 @@
+---
+# This playbook contains cloud infrastructure plays that will be run only on the Ansible host
+
+- name: Provision VMware Instances
+  async: 7200
+  poll: 0
+  vmware_guest:
+    validate_certs: no
+    hostname: "{{ esxi_hostname }}"
+    username: "{{ esxi_username1 }}"
+    password: "{{ esxi_password1 }}"
+    datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
+    name: "{{ item }}"
+    folder: "/{{ esxi_datacenter | default('ha-datacenter') }}/{{ esxi_folder | default('vm') }}"
+    disk: 
+    - "{{ hostvars[item]['disks'] | first }}"
+    networks:
+    - device_type: vmxnet3
+      name: VM Dedicated Net
+    guest_id: "{{ esxi_guestid | default('centos64Guest') }}"
+    hardware:
+      memory_mb: "{{ hostvars[item]['memory'] | default('2048') }}"
+      num_cpus: 1
+      scsi: paravirtual
+      hotadd_memory: True
+    state: "{{ vmstate | default('poweredon') }}"
+    force: yes
+  register: vms
+  loop: "{{ groups['nodes'] }}"
+  tags:
+    - provision
+    - cleanup
+
+- name: Wait for instance launch completion
+  async_status: jid="{{ item.ansible_job_id }}"
+  register: vms_jobs
+  until: vms_jobs.finished
+  retries: 300
+  loop: "{{ vms.results }}"
+  tags:
+    - provision
+    - cleanup
+
+- pause: seconds=10
+  tags:
+    - provision
+    - cleanup
+
+- vmware_guest_facts:
+    validate_certs: no
+    hostname: "{{ esxi_hostname }}"
+    username: "{{ esxi_username1 }}"
+    password: "{{ esxi_password1 }}"
+    datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
+    name: "{{ item }}"
+  register: newfacts
+  loop: "{{ groups['nodes'] }}"
+  when: vmstate != 'absent'
+  tags:
+    - provision
+
+- name: Add system to cobbler
+  shell: >
+    cobbler system add --name={{ item.instance.hw_name }} --profile={{ cobbler_profile }} --interface eth0 \
+         --dns-name {{ item.instance.hw_name }} --mac={{ item.instance.hw_eth0.macaddress }} \
+         --hostname {{ item.instance.hw_name }}
+    cobbler sync
+  delegate_to: "{{ cobbler_hostname }}"
+  become: yes
+  loop: "{{ newfacts.results }}"
+  when: vmstate != 'absent'
+  tags:
+    - provision
+
+- name: Restart VMware Instances
+  async: 7200
+  poll: 0
+  vmware_guest:
+    validate_certs: no
+    hostname: "{{ esxi_hostname }}"
+    username: "{{ esxi_username1 }}"
+    password: "{{ esxi_password1 }}"
+    datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
+    name: "{{ item }}"
+    folder: "/{{ esxi_datacenter | default('ha-datacenter') }}/{{ esxi_folder | default('vm') }}"
+    state: restarted
+    force: yes
+  register: vms_restart
+  loop: "{{ groups['nodes'] }}"
+  when: vmstate != 'absent'
+  tags:
+    - provision
+
+- name: Wait for instance launch completion
+  async_status: jid="{{ item.ansible_job_id }}"
+  register: vms_restartjob
+  until: vms_restartjob.finished
+  retries: 300
+  loop: "{{ vms_restart.results }}"
+  when: vmstate != 'absent'
+  tags:
+    - provision
+
+- name: Wait for host SSH to be ready
+  wait_for:
+    host: "{{ item }}"
+    port: 22
+    search_regex: OpenSSH
+    delay: 10
+    timeout: 900
+  connection: local
+  loop: "{{ groups['nodes'] }}"
+  when: vmstate != 'absent'
+  tags:
+    - provision
+
+- name: Add supplemental disk for docker,etc to VMware Instances
+  async: 7200
+  poll: 0
+  vmware_guest:
+    validate_certs: no
+    hostname: "{{ esxi_hostname }}"
+    username: "{{ esxi_username1 }}"
+    password: "{{ esxi_password1 }}"
+    datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
+    name: "{{ item }}"
+    folder: "/{{ esxi_datacenter | default('ha-datacenter') }}/{{ esxi_folder | default('vm') }}"
+    disk: "{{ hostvars[item]['disks'] }}"
+    guest_id: "{{ esxi_guestid | default('centos64Guest') }}"
+    state: present
+    force: yes
+  register: vms_reconfig
+  loop: "{{ groups['nodes'] }}"
+  when: vmstate != 'absent' and hostvars[item]['disks'] is defined
+  tags:
+    - dockerconfig
+
+- debug: var=vms_reconfig
+  tags:
+    - dockerconfig
+
+- name: Wait for instance disk reconfiguration completion
+  async_status: jid="{{ item.ansible_job_id }}"
+  register: disk_jobs
+  until: disk_jobs.finished
+  retries: 300
+  loop: "{{ vms_reconfig.results }}"
+  when: vmstate != 'absent' and hostvars[item.item]['disks'] is defined
+  tags:
+    - dockerconfig
+
+
+- name: Delete system from cobbler if state is absent
+  shell: >
+    cobbler system remove --name={{ item }}
+    cobbler sync
+  delegate_to: "{{ cobbler_hostname }}"
+  become: yes
+  loop: "{{ groups['nodes'] }}"
+  when: vmstate == 'absent'
+  ignore_errors: yes
+  tags:
+    - cleanup
+
+
