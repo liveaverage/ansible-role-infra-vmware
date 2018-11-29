@@ -7,8 +7,9 @@
   vmware_guest:
     validate_certs: no
     hostname: "{{ esxi_hostname }}"
-    username: "{{ esxi_username1 }}"
-    password: "{{ esxi_password1 }}"
+    username: "{{ esxi_username }}"
+    password: "{{ esxi_password }}"
+    esxi_hostname: "{{ esxi_target_hostname | default(esxi_hostname) }}"
     datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
     name: "{{ item }}"
     folder: "/{{ esxi_datacenter | default('ha-datacenter') }}/{{ esxi_folder | default('vm') }}"
@@ -16,11 +17,11 @@
     - "{{ hostvars[item]['disks'] | first }}"
     networks:
     - device_type: vmxnet3
-      name: VM Dedicated Net
+      name: "{{ esxi_net | default('VM Dedicated Net') }}"
     guest_id: "{{ esxi_guestid | default('centos64Guest') }}"
     hardware:
       memory_mb: "{{ hostvars[item]['memory'] | default('2048') }}"
-      num_cpus: 1
+      num_cpus: "{{ hostvars[item]['cpu'] | default('1') }}"
       scsi: paravirtual
       hotadd_memory: True
     state: "{{ vmstate | default('poweredon') }}"
@@ -49,8 +50,8 @@
 - vmware_guest_facts:
     validate_certs: no
     hostname: "{{ esxi_hostname }}"
-    username: "{{ esxi_username1 }}"
-    password: "{{ esxi_password1 }}"
+    username: "{{ esxi_username }}"
+    password: "{{ esxi_password }}"
     datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
     name: "{{ item }}"
   register: newfacts
@@ -78,8 +79,8 @@
   vmware_guest:
     validate_certs: no
     hostname: "{{ esxi_hostname }}"
-    username: "{{ esxi_username1 }}"
-    password: "{{ esxi_password1 }}"
+    username: "{{ esxi_username }}"
+    password: "{{ esxi_password }}"
     datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
     name: "{{ item }}"
     folder: "/{{ esxi_datacenter | default('ha-datacenter') }}/{{ esxi_folder | default('vm') }}"
@@ -120,8 +121,9 @@
   vmware_guest:
     validate_certs: no
     hostname: "{{ esxi_hostname }}"
-    username: "{{ esxi_username1 }}"
-    password: "{{ esxi_password1 }}"
+    username: "{{ esxi_username }}"
+    password: "{{ esxi_password }}"
+    esxi_hostname: "{{ esxi_target_hostname | default(esxi_hostname) }}"
     datacenter: "{{ esxi_datacenter | default('ha-datacenter') }}"
     name: "{{ item }}"
     folder: "/{{ esxi_datacenter | default('ha-datacenter') }}/{{ esxi_folder | default('vm') }}"
